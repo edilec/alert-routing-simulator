@@ -1,0 +1,17 @@
+{
+  "name": "alert-routing-simulator",
+  "version": "0.0.0",
+  "description": "Simulate alert routes to verify grouping, escalation and quiet hours.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edilec/alert-routing-simulator"
+  }
+}
