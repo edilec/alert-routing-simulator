@@ -1,0 +1,111 @@
+import { performance } from 'node:perf_hooks'
+
+import { EvidenceError, parseUniqueJson } from './json.mjs'
+import { parseInstant, validateScenario } from './model.mjs'
+
+export const TOOL_ID = 'alert-routing-simulator'
+export const DEFAULT_LIMITS = Object.freeze({ maxBytes: 1_048_576, maxAlerts: 1000, maxRoutes: 100, maxLevels: 16, maxDepth: 16, maxMillis: 5000 })
+export const RULE_SEVERITY = Object.freeze({
+  'alert-limit': 'error',
+  'byte-limit': 'error',
+  'depth-limit': 'error',
+  'invalid-utf8': 'error',
+  'level-limit': 'error',
+  'malformed-json': 'error',
+  'no-alerts': 'error',
+  'numeric-precision': 'error',
+  'route-limit': 'error',
+  'scenario-duplicate-key': 'error',
+  'scenario-invalid': 'error',
+  'scenario-unreadable': 'error',
+  'timezone-unsupported': 'error',
+  'unrouted-alert': 'error',
+})
+
+const INCOMPLETE = new Set(Object.keys(RULE_SEVERITY).filter((rule) => rule !== 'unrouted-alert'))
+const OPTIONS = Object.freeze(['scenarioBytes', 'at', 'limits', 'clock', 'source'])
+const byCodeUnit = (left, right) => left === right ? 0 : left < right ? -1 : 1
+
+function configuration(input) {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new TypeError('Options must be an object.')
+  if (Object.keys(input).some((key) => !OPTIONS.includes(key))) throw new TypeError('Unknown option.')
+  const at = parseInstant(input.at)
+  if (at === null) throw new TypeError('An explicit canonical UTC --at is required.')
+  const configured = input.limits ?? {}
+  if (typeof configured !== 'object' || configured === null || Array.isArray(configured)) throw new TypeError('Limits must be an object.')
+  if (Object.keys(configured).some((key) => !Object.hasOwn(DEFAULT_LIMITS, key))) throw new TypeError('Unknown limit.')
+  const limits = { ...DEFAULT_LIMITS, ...configured }
+  if (Object.values(limits).some((value) => !Number.isSafeInteger(value) || value < 1)) throw new TypeError('Limits must be positive safe integers.')
+  const clock = input.clock ?? performance.now.bind(performance)
+  if (typeof clock !== 'function') throw new TypeError('Clock must be a function.')
+  const source = input.source ?? 'scenario.json'
+  if (typeof source !== 'string' || source.length === 0) throw new TypeError('Source must be a nonempty relative path.')
+  return { at, limits, clock, source }
+}
+
+function report(source, checked, findings, decisions = [], notifications = []) {
+  for (const entry of findings) {
+    entry.severity = RULE_SEVERITY[entry.ruleId]
+    if (entry.severity === undefined) throw new TypeError('Undeclared rule severity.')
+    entry.location = { file: source, pointer: entry.pointer }
+    delete entry.pointer
+  }
+  findings.sort((left, right) => byCodeUnit(left.location.file, right.location.file)
+    || byCodeUnit(left.location.pointer, right.location.pointer) || byCodeUnit(left.ruleId, right.ruleId))
+  const incomplete = findings.some((entry) => INCOMPLETE.has(entry.ruleId))
+  const status = incomplete ? 'incomplete' : findings.length > 0 ? 'fail' : 'pass'
+  return {
+    schemaVersion: '1', tool: TOOL_ID, status,
+    summary: { checked, errors: findings.filter((entry) => entry.severity === 'error').length, warnings: 0, groups: new Set(decisions.map((decision) => decision.groupIndex)).size, notifications: notifications.length },
+    findings, decisions, notifications,
+  }
+}
+
+function finding(ruleId, pointer, message) {
+  return { ruleId, pointer, message }
+}
+
+export function simulate(input = {}) {
+  const { at, limits, clock, source } = configuration(input)
+  const started = clock()
+  if (!Number.isFinite(started)) throw new TypeError('Clock must return finite milliseconds.')
+  let document
+  try {
+    document = parseUniqueJson(input.scenarioBytes, limits)
+  } catch (error) {
+    if (!(error instanceof EvidenceError)) throw error
+    return report(source, 0, [finding(error.code, '', 'The scenario could not be fully read or evaluated.')])
+  }
+  const model = validateScenario(document, limits)
+  if (model.problems.length > 0) return report(source, 0, model.problems)
+  if (model.alerts.length === 0) return report(source, 0, [finding('no-alerts', '/alerts', 'No alert was available to evaluate.')])
+
+  const decisions = []
+  const notifications = []
+  const findings = []
+  let checked = 0
+  let groupIndex = 0
+  for (const alert of model.alerts) {
+    if (alert.occurredAt > at) continue
+    checked += 1
+    const route = model.routes.find((entry) => Object.entries(entry.match).every(([key, value]) => alert.labels[key] === value))
+    if (route === undefined) {
+      findings.push(finding('unrouted-alert', `/alerts/${alert.index}`, 'This alert matches no declared route.'))
+      continue
+    }
+    for (const level of route.escalations) {
+      const due = alert.occurredAt + level.afterMs
+      const dueAt = new Date(due).toISOString()
+      const state = due > at ? 'pending' : due >= alert.expiresAt ? 'expired' : 'ready'
+      const decision = {
+        groupIndex, routePointer: `/routes/${route.index}`, levelPointer: `/routes/${route.index}/escalations/${level.index}`,
+        alertPointers: [`/alerts/${alert.index}`], dueAt, activeAlerts: state === 'expired' ? 0 : 1, state,
+      }
+      decisions.push(decision)
+      if (state === 'ready') notifications.push({ ...decision, recipientPointers: level.recipients.map((_, index) => `${decision.levelPointer}/recipients/${index}`) })
+    }
+    groupIndex += 1
+  }
+  if (checked === 0) findings.push(finding('no-alerts', '/alerts', 'No alert was available at the virtual cutoff.'))
+  return report(source, checked, findings, decisions, notifications)
+}
