@@ -19,6 +19,7 @@ export const RULE_SEVERITY = Object.freeze({
   'scenario-invalid': 'error',
   'scenario-unreadable': 'error',
   'timezone-unsupported': 'error',
+  'time-overflow': 'error',
   'unrouted-alert': 'error',
 })
 
@@ -84,8 +85,10 @@ export function simulate(input = {}) {
   const notifications = []
   const findings = []
   let checked = 0
-  let groupIndex = 0
-  for (const alert of model.alerts) {
+  const groups = []
+  const byKey = new Map()
+  const alerts = [...model.alerts].sort((left, right) => left.occurredAt - right.occurredAt || left.index - right.index)
+  for (const alert of alerts) {
     if (alert.occurredAt > at) continue
     checked += 1
     const route = model.routes.find((entry) => Object.entries(entry.match).every(([key, value]) => alert.labels[key] === value))
@@ -93,18 +96,39 @@ export function simulate(input = {}) {
       findings.push(finding('unrouted-alert', `/alerts/${alert.index}`, 'This alert matches no declared route.'))
       continue
     }
+    const key = JSON.stringify([route.index, ...route.groupBy.map((name) => alert.labels[name])])
+    let routeGroups = byKey.get(key)
+    if (routeGroups === undefined) {
+      routeGroups = []
+      byKey.set(key, routeGroups)
+    }
+    let group = routeGroups.at(-1)
+    if (group === undefined || alert.occurredAt - group.start > route.groupWindowMs) {
+      group = { index: groups.length, route, start: alert.occurredAt, alerts: [] }
+      groups.push(group)
+      routeGroups.push(group)
+    }
+    group.alerts.push(alert)
+  }
+  for (const group of groups) {
+    const { route } = group
     for (const level of route.escalations) {
-      const due = alert.occurredAt + level.afterMs
+      const due = group.start + level.afterMs
+      if (!Number.isSafeInteger(due) || !Number.isFinite(new Date(due).getTime())) {
+        return report(source, checked, [finding('time-overflow', `/routes/${route.index}/escalations/${level.index}/afterMs`, 'An escalation due instant is outside the supported UTC range.')])
+      }
       const dueAt = new Date(due).toISOString()
-      const state = due > at ? 'pending' : due >= alert.expiresAt ? 'expired' : 'ready'
+      const active = group.alerts.filter((alert) => alert.occurredAt <= due && due < alert.expiresAt)
+      const activeAlerts = new Set(active.map((alert) => alert.fingerprint)).size
+      const state = due > at ? 'pending' : activeAlerts === 0 ? 'expired' : 'ready'
       const decision = {
-        groupIndex, routePointer: `/routes/${route.index}`, levelPointer: `/routes/${route.index}/escalations/${level.index}`,
-        alertPointers: [`/alerts/${alert.index}`], dueAt, activeAlerts: state === 'expired' ? 0 : 1, state,
+        groupIndex: group.index, routePointer: `/routes/${route.index}`, levelPointer: `/routes/${route.index}/escalations/${level.index}`,
+        alertPointers: due > at ? [] : active.map((alert) => `/alerts/${alert.index}`),
+        dueAt, activeAlerts: due > at ? null : activeAlerts, state,
       }
       decisions.push(decision)
       if (state === 'ready') notifications.push({ ...decision, recipientPointers: level.recipients.map((_, index) => `${decision.levelPointer}/recipients/${index}`) })
     }
-    groupIndex += 1
   }
   if (checked === 0) findings.push(finding('no-alerts', '/alerts', 'No alert was available at the virtual cutoff.'))
   return report(source, checked, findings, decisions, notifications)
