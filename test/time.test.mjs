@@ -70,6 +70,28 @@ test('a timezone conversion failure is incomplete, not silently non-quiet', () =
   }
 })
 
+test('a later quiet window conversion failure is incomplete even if an earlier window suppresses', () => {
+  const document = scenario('2026-09-20T18:00:00.000Z', '2026-09-20T19:00:00.000Z',
+    { timeZone: 'Asia/Kolkata', start: '22:00', end: '07:00' })
+  document.routes[0].quietHours.push({ timeZone: 'UTC', start: '00:00', end: '01:00' })
+  const original = Intl.DateTimeFormat.prototype.formatToParts
+  let reads = 0
+  Intl.DateTimeFormat.prototype.formatToParts = function (...args) {
+    reads += 1
+    if (reads === 2) throw new RangeError('synthetic second-window conversion failure')
+    return original.apply(this, args)
+  }
+  try {
+    const report = run(document)
+    assert.equal(reads, 2)
+    assert.equal(report.status, 'incomplete')
+    assert.ok(report.findings.some((finding) => finding.ruleId === 'timezone-conversion-failed'))
+    assert.deepEqual(report.notifications, [])
+  } finally {
+    Intl.DateTimeFormat.prototype.formatToParts = original
+  }
+})
+
 test('injected elapsed timeout stays silent at N and fires at N+1', () => {
   const quiet = { timeZone: 'UTC', start: '22:00', end: '07:00' }
   const document = scenario('2026-09-20T10:00:00.000Z', '2026-09-20T11:00:00.000Z', quiet)

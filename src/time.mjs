@@ -27,11 +27,12 @@ function configuredMinute(text) {
 }
 
 export function isQuietAt(windows, instant) {
+  let quiet = false
   for (const window of windows) {
     const minute = localMinute(instant, window.timeZone)
     const start = configuredMinute(window.start)
     const end = configuredMinute(window.end)
-    if (start < end ? minute >= start && minute < end : minute >= start || minute < end) return true
+    if (start < end ? minute >= start && minute < end : minute >= start || minute < end) quiet = true
   }
-  return false
+  return quiet
 }

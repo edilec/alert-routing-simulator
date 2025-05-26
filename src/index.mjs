@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks'
+import { isAbsolute, sep } from 'node:path'
 
 import { EvidenceError, parseUniqueJson } from './json.mjs'
 import { parseInstant, validateScenario } from './model.mjs'
@@ -11,11 +12,15 @@ export const RULE_SEVERITY = Object.freeze({
   'byte-limit': 'error',
   'depth-limit': 'error',
   'invalid-utf8': 'error',
+  'input-outside-root': 'error',
+  'input-unreadable': 'error',
   'level-limit': 'error',
   'malformed-json': 'error',
   'no-alerts': 'error',
   'numeric-precision': 'error',
   'route-limit': 'error',
+  'output-refused': 'error',
+  'output-unwritable': 'error',
   'scenario-duplicate-key': 'error',
   'scenario-invalid': 'error',
   'scenario-unreadable': 'error',
@@ -29,7 +34,7 @@ export const RULE_SEVERITY = Object.freeze({
 
 const INCOMPLETE = new Set(Object.keys(RULE_SEVERITY).filter((rule) => rule !== 'unrouted-alert'))
 const OPTIONS = Object.freeze(['scenarioBytes', 'at', 'limits', 'clock', 'source'])
-const byCodeUnit = (left, right) => left === right ? 0 : left < right ? -1 : 1
+export const compareCodeUnits = (left, right) => left === right ? 0 : left < right ? -1 : 1
 
 function configuration(input) {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new TypeError('Options must be an object.')
@@ -44,7 +49,10 @@ function configuration(input) {
   const clock = input.clock ?? performance.now.bind(performance)
   if (typeof clock !== 'function') throw new TypeError('Clock must be a function.')
   const source = input.source ?? 'scenario.json'
-  if (typeof source !== 'string' || source.length === 0) throw new TypeError('Source must be a nonempty relative path.')
+  if (typeof source !== 'string' || source.length === 0 || isAbsolute(source)
+    || source.split(sep).includes('..') || /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(source)) {
+    throw new TypeError('Source must be a safe nonempty relative path.')
+  }
   return { at, limits, clock, source }
 }
 
@@ -55,10 +63,10 @@ function report(source, checked, findings, decisions = [], notifications = []) {
     entry.location = { file: source, pointer: entry.pointer }
     delete entry.pointer
   }
-  findings.sort((left, right) => byCodeUnit(left.location.file, right.location.file)
-    || byCodeUnit(left.location.pointer, right.location.pointer) || byCodeUnit(left.ruleId, right.ruleId))
+  findings.sort((left, right) => compareCodeUnits(left.location.file, right.location.file)
+    || compareCodeUnits(left.location.pointer, right.location.pointer) || compareCodeUnits(left.ruleId, right.ruleId))
   const incomplete = findings.some((entry) => INCOMPLETE.has(entry.ruleId))
-  const status = incomplete ? 'incomplete' : findings.length > 0 ? 'fail' : 'pass'
+  const status = incomplete ? 'incomplete' : findings.some((entry) => entry.severity === 'error') ? 'fail' : 'pass'
   return {
     schemaVersion: '1', tool: TOOL_ID, status,
     summary: { checked, errors: findings.filter((entry) => entry.severity === 'error').length, warnings: 0, groups: new Set(decisions.map((decision) => decision.groupIndex)).size, notifications: notifications.length },
@@ -68,6 +76,18 @@ function report(source, checked, findings, decisions = [], notifications = []) {
 
 function finding(ruleId, pointer, message) {
   return { ruleId, pointer, message }
+}
+
+export function incompleteReport(source, ruleId) {
+  const messages = Object.freeze({
+    'byte-limit': 'The named scenario exceeds the configured input byte limit and was not read.',
+    'input-outside-root': 'The named scenario resolves outside the declared root and was not read.',
+    'input-unreadable': 'The named scenario could not be read as a regular file.',
+    'output-refused': 'The report destination was refused to protect an input or the declared root.',
+    'output-unwritable': 'The report destination could not be written.',
+  })
+  if (!Object.hasOwn(messages, ruleId)) throw new TypeError('Unknown incomplete-report rule.')
+  return report(source, 0, [finding(ruleId, '', messages[ruleId])])
 }
 
 export function simulate(input = {}) {

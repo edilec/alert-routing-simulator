@@ -1,14 +1,21 @@
 {
   "name": "alert-routing-simulator",
-  "version": "0.0.0",
-  "description": "Simulate alert routes to verify grouping, escalation and quiet hours.",
+  "version": "0.1.0",
+  "description": "Report saved alert routing, grouping, escalation and quiet-hour decisions without sending notifications.",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test"
+    "lint": "node --check src/index.mjs && node --check src/json.mjs && node --check src/model.mjs && node --check src/time.mjs && node --check src/write-guard.mjs && node --check bin/alert-routing-simulator.mjs && node --check test/model.test.mjs && node --check test/simulation.test.mjs && node --check test/time.test.mjs && node --check test/cli.test.mjs && node --check test/offline.test.mjs",
+    "test": "node --test",
+    "example": "node bin/alert-routing-simulator.mjs --root . --scenario examples/scenario-pass.json --at 2026-09-20T10:00:30.000Z --json",
+    "example:failing": "node bin/alert-routing-simulator.mjs --root . --scenario examples/scenario-fail.json --at 2026-09-20T10:00:30.000Z --json",
+    "check": "npm run lint && npm test && npm run example"
   },
+  "bin": { "alert-routing-simulator": "./bin/alert-routing-simulator.mjs" },
+  "exports": { ".": "./src/index.mjs" },
+  "files": ["bin", "src", "examples", "docs", "README.md", "LICENSE"],
   "license": "MIT",
   "repository": {
     "type": "git",

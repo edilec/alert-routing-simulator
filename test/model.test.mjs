@@ -55,6 +55,17 @@ test('duplicate JSON keys are refused before parse can erase them', () => {
   assert.ok(report.findings.some((finding) => finding.ruleId === 'scenario-duplicate-key'))
 })
 
+test('rounded numeric evidence is incomplete while exact equivalent decimal evidence passes', () => {
+  const text = JSON.stringify(goodScenario())
+  const exact = text.replace('"groupWindowMs":60000', '"groupWindowMs":60000.0')
+  const rounded = text.replace('"groupWindowMs":60000', '"groupWindowMs":60000.000000000000001')
+  const runBytes = (value) => simulate({ scenarioBytes: new TextEncoder().encode(value), at: AT, clock: () => 0 })
+  assert.equal(runBytes(exact).status, 'pass')
+  const refused = runBytes(rounded)
+  assert.equal(refused.status, 'incomplete')
+  assert.ok(refused.findings.some((entry) => entry.ruleId === 'numeric-precision'))
+})
+
 test('an invalid IANA timezone is incomplete, never a non-quiet assumption', () => {
   const document = goodScenario()
   document.routes[0].quietHours = [{ timeZone: 'Not/A_Zone', start: '22:00', end: '07:00' }]

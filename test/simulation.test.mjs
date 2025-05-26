@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { simulate } from '../src/index.mjs'
+import { compareCodeUnits, simulate } from '../src/index.mjs'
 
 const START = '2026-09-20T10:00:00.000Z'
 const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
@@ -87,6 +87,20 @@ test('a fully evaluated unmatched alert fails at its source position', () => {
   assert.equal(report.status, 'fail')
   assert.equal(report.summary.checked, 1)
   assert.deepEqual(report.findings.map((finding) => [finding.ruleId, finding.location.pointer]), [['unrouted-alert', '/alerts/0']])
+})
+
+test('multiple finding locations sort by UTF-16 code unit, not locale collation', () => {
+  assert.equal(compareCodeUnits('Z', 'a'), -1)
+  assert.equal(compareCodeUnits('a', 'Z'), 1)
+  assert.equal(compareCodeUnits('same', 'same'), 0)
+  const document = scenario()
+  document.alerts = Array.from({ length: 11 }, (_, index) => ({
+    ...document.alerts[0], fingerprint: `synthetic-${index}`, labels: { severity: 'warning', service: 'api' },
+  }))
+  const report = run(document)
+  assert.equal(report.status, 'fail')
+  assert.deepEqual(report.findings.map((entry) => entry.location.pointer),
+    ['/alerts/0', '/alerts/1', '/alerts/10', '/alerts/2', '/alerts/3', '/alerts/4', '/alerts/5', '/alerts/6', '/alerts/7', '/alerts/8', '/alerts/9'])
 })
 
 test('first matching route wins without exposing its label values or recipients', () => {

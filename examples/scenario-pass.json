@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "alerts": [
+    {
+      "fingerprint": "synthetic-alert-a",
+      "occurredAt": "2026-09-20T10:00:00.000Z",
+      "expiresAt": "2026-09-20T12:00:00.000Z",
+      "labels": { "service": "api", "severity": "critical" }
+    },
+    {
+      "fingerprint": "synthetic-alert-a",
+      "occurredAt": "2026-09-20T10:00:30.000Z",
+      "expiresAt": "2026-09-20T12:00:00.000Z",
+      "labels": { "service": "api", "severity": "critical" }
+    }
+  ],
+  "routes": [
+    {
+      "match": { "severity": "critical" },
+      "groupBy": ["service"],
+      "groupWindowMs": 60000,
+      "quietHours": [
+        { "timeZone": "Asia/Kolkata", "start": "22:00", "end": "07:00" }
+      ],
+      "escalations": [
+        { "afterMs": 0, "recipients": ["SYNTHETIC_PRIMARY"] },
+        { "afterMs": 3600000, "recipients": ["SYNTHETIC_BACKUP"] }
+      ]
+    }
+  ]
+}

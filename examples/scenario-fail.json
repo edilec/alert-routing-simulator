@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "alerts": [
+    {
+      "fingerprint": "synthetic-alert-unmatched",
+      "occurredAt": "2026-09-20T10:00:00.000Z",
+      "expiresAt": "2026-09-20T12:00:00.000Z",
+      "labels": { "service": "api", "severity": "warning" }
+    }
+  ],
+  "routes": [
+    {
+      "match": { "severity": "critical" },
+      "groupBy": ["service"],
+      "groupWindowMs": 60000,
+      "quietHours": [],
+      "escalations": [
+        { "afterMs": 0, "recipients": ["SYNTHETIC_PRIMARY"] }
+      ]
+    }
+  ]
+}
