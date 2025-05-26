@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks'
 
 import { EvidenceError, parseUniqueJson } from './json.mjs'
 import { parseInstant, validateScenario } from './model.mjs'
+import { isQuietAt, TimezoneConversionError } from './time.mjs'
 
 export const TOOL_ID = 'alert-routing-simulator'
 export const DEFAULT_LIMITS = Object.freeze({ maxBytes: 1_048_576, maxAlerts: 1000, maxRoutes: 100, maxLevels: 16, maxDepth: 16, maxMillis: 5000 })
@@ -18,6 +19,9 @@ export const RULE_SEVERITY = Object.freeze({
   'scenario-duplicate-key': 'error',
   'scenario-invalid': 'error',
   'scenario-unreadable': 'error',
+  'simulation-timeout': 'error',
+  'clock-invalid': 'error',
+  'timezone-conversion-failed': 'error',
   'timezone-unsupported': 'error',
   'time-overflow': 'error',
   'unrouted-alert': 'error',
@@ -70,6 +74,15 @@ export function simulate(input = {}) {
   const { at, limits, clock, source } = configuration(input)
   const started = clock()
   if (!Number.isFinite(started)) throw new TypeError('Clock must return finite milliseconds.')
+  let previousTick = started
+  const elapsedProblem = () => {
+    let tick
+    try { tick = clock() } catch { return 'clock-invalid' }
+    if (typeof tick !== 'number' || !Number.isFinite(tick) || tick < previousTick) return 'clock-invalid'
+    previousTick = tick
+    return tick - started > limits.maxMillis ? 'simulation-timeout' : null
+  }
+  const stopped = (ruleId) => report(source, 0, [finding(ruleId, '', 'The simulation could not complete within its declared time evidence.')])
   let document
   try {
     document = parseUniqueJson(input.scenarioBytes, limits)
@@ -77,7 +90,11 @@ export function simulate(input = {}) {
     if (!(error instanceof EvidenceError)) throw error
     return report(source, 0, [finding(error.code, '', 'The scenario could not be fully read or evaluated.')])
   }
+  const postParseProblem = elapsedProblem()
+  if (postParseProblem !== null) return stopped(postParseProblem)
   const model = validateScenario(document, limits)
+  const postModelProblem = elapsedProblem()
+  if (postModelProblem !== null) return stopped(postModelProblem)
   if (model.problems.length > 0) return report(source, 0, model.problems)
   if (model.alerts.length === 0) return report(source, 0, [finding('no-alerts', '/alerts', 'No alert was available to evaluate.')])
 
@@ -89,6 +106,8 @@ export function simulate(input = {}) {
   const byKey = new Map()
   const alerts = [...model.alerts].sort((left, right) => left.occurredAt - right.occurredAt || left.index - right.index)
   for (const alert of alerts) {
+    const timeProblem = elapsedProblem()
+    if (timeProblem !== null) return stopped(timeProblem)
     if (alert.occurredAt > at) continue
     checked += 1
     const route = model.routes.find((entry) => Object.entries(entry.match).every(([key, value]) => alert.labels[key] === value))
@@ -113,6 +132,8 @@ export function simulate(input = {}) {
   for (const group of groups) {
     const { route } = group
     for (const level of route.escalations) {
+      const timeProblem = elapsedProblem()
+      if (timeProblem !== null) return stopped(timeProblem)
       const due = group.start + level.afterMs
       if (!Number.isSafeInteger(due) || !Number.isFinite(new Date(due).getTime())) {
         return report(source, checked, [finding('time-overflow', `/routes/${route.index}/escalations/${level.index}/afterMs`, 'An escalation due instant is outside the supported UTC range.')])
@@ -120,7 +141,15 @@ export function simulate(input = {}) {
       const dueAt = new Date(due).toISOString()
       const active = group.alerts.filter((alert) => alert.occurredAt <= due && due < alert.expiresAt)
       const activeAlerts = new Set(active.map((alert) => alert.fingerprint)).size
-      const state = due > at ? 'pending' : activeAlerts === 0 ? 'expired' : 'ready'
+      let state = due > at ? 'pending' : activeAlerts === 0 ? 'expired' : 'ready'
+      if (state === 'ready') {
+        try {
+          if (isQuietAt(route.quietHours, due)) state = 'suppressed-quiet'
+        } catch (error) {
+          if (!(error instanceof TimezoneConversionError)) throw error
+          return report(source, 0, [finding('timezone-conversion-failed', `/routes/${route.index}/quietHours`, 'The route timezone could not be converted at this escalation instant.')])
+        }
+      }
       const decision = {
         groupIndex: group.index, routePointer: `/routes/${route.index}`, levelPointer: `/routes/${route.index}/escalations/${level.index}`,
         alertPointers: due > at ? [] : active.map((alert) => `/alerts/${alert.index}`),
