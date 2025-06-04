@@ -67,6 +67,16 @@ test('invalid options and roots exit two with empty stdout and a fixed diagnosti
   } finally { await f.clean() }
 })
 
+test('an oversized encoded source path is invalid configuration, not a long report label', async () => {
+  const f = await fixture()
+  try {
+    const run = cli(['--root', f.root, '--scenario', join(f.root, 'x'.repeat(4097)), '--at', AT, '--json'])
+    assert.equal(run.status, 2)
+    assert.equal(run.stdout, '')
+    assert.equal(run.stderr, 'Invalid configuration. Use --help for usage.\n')
+  } finally { await f.clean() }
+})
+
 test('an unreadable named scenario exits two with an incomplete JSON report', async () => {
   const f = await fixture()
   try {

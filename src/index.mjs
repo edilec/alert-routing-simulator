@@ -6,6 +6,7 @@ import { parseInstant, validateScenario } from './model.mjs'
 import { isQuietAt, TimezoneConversionError } from './time.mjs'
 
 export const TOOL_ID = 'alert-routing-simulator'
+export const MAX_SOURCE_UNITS = 4096
 export const DEFAULT_LIMITS = Object.freeze({ maxBytes: 1_048_576, maxAlerts: 1000, maxRoutes: 100, maxLevels: 16, maxDepth: 16, maxMillis: 5000 })
 export const RULE_SEVERITY = Object.freeze({
   'alert-limit': 'error',
@@ -49,9 +50,9 @@ function configuration(input) {
   const clock = input.clock ?? performance.now.bind(performance)
   if (typeof clock !== 'function') throw new TypeError('Clock must be a function.')
   const source = input.source ?? 'scenario.json'
-  if (typeof source !== 'string' || source.length === 0 || isAbsolute(source)
+  if (typeof source !== 'string' || source.length === 0 || source.length > MAX_SOURCE_UNITS || isAbsolute(source)
     || source.split(sep).includes('..') || /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(source)) {
-    throw new TypeError('Source must be a safe nonempty relative path.')
+    throw new TypeError('Source must be a safe nonempty relative path of at most 4096 UTF-16 units.')
   }
   return { at, limits, clock, source }
 }

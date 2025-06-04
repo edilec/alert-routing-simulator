@@ -3,7 +3,7 @@
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 
-import { DEFAULT_LIMITS, incompleteReport, simulate } from '../src/index.mjs'
+import { DEFAULT_LIMITS, MAX_SOURCE_UNITS, incompleteReport, simulate } from '../src/index.mjs'
 import { parseInstant } from '../src/model.mjs'
 import { assertWritableDestination } from '../src/write-guard.mjs'
 
@@ -87,6 +87,9 @@ function jsonBytes(report) {
 async function main() {
   let config
   let realRoot
+  let namedInput
+  let namedOutput
+  let source
   try {
     config = parseArgs(process.argv.slice(2))
     if (config.help) {
@@ -95,15 +98,16 @@ async function main() {
     }
     realRoot = await realpath(resolve(config.root))
     if (!(await stat(realRoot)).isDirectory()) throw new TypeError('Root is not a directory.')
+    namedInput = resolve(realRoot, config.scenario)
+    namedOutput = config.output === undefined ? null : resolve(realRoot, config.output)
+    source = safeSource(realRoot, namedInput)
+    if (source.length > MAX_SOURCE_UNITS) throw new TypeError('Source label exceeds its bound.')
   } catch {
     process.stderr.write('Invalid configuration. Use --help for usage.\n')
     return 2
   }
 
-  const namedInput = resolve(realRoot, config.scenario)
-  const namedOutput = config.output === undefined ? null : resolve(realRoot, config.output)
   let actualInput = null
-  let source = safeSource(realRoot, namedInput)
   let result
   try {
     actualInput = await realpath(namedInput)

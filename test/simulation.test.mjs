@@ -89,6 +89,20 @@ test('a fully evaluated unmatched alert fails at its source position', () => {
   assert.deepEqual(report.findings.map((finding) => [finding.ruleId, finding.location.pointer]), [['unrouted-alert', '/alerts/0']])
 })
 
+test('library source provenance is exact at 4096 units and rejects 4097 before reporting', () => {
+  const document = scenario()
+  document.alerts[0].labels.severity = 'warning'
+  const bytes = encode(document)
+  const source = 'x'.repeat(4096)
+  const exact = simulate({ scenarioBytes: bytes, at: START, clock: () => 0, source })
+  assert.equal(exact.status, 'fail')
+  assert.equal(exact.summary.checked, 1)
+  assert.equal(exact.findings[0].ruleId, 'unrouted-alert')
+  assert.equal(exact.findings[0].location.file, source)
+  assert.throws(() => simulate({ scenarioBytes: bytes, at: START, clock: () => 0, source: `${source}x` }),
+    { name: 'TypeError', message: 'Source must be a safe nonempty relative path of at most 4096 UTF-16 units.' })
+})
+
 test('multiple finding locations sort by UTF-16 code unit, not locale collation', () => {
   assert.equal(compareCodeUnits('Z', 'a'), -1)
   assert.equal(compareCodeUnits('a', 'Z'), 1)

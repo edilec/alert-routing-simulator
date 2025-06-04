@@ -62,6 +62,11 @@ needs a valid IANA timezone and distinct `HH:mm` endpoints. Alert expiry must
 be later than occurrence. Escalation offsets are nonnegative, increasing safe
 integers; every level has at least one unique recipient ID.
 
+The library's relative `source` label is limited to 4096 UTF-16 units; exactly
+4096 is accepted, while 4097 is invalid configuration. The CLI applies the
+same bound to its safely encoded relative path label before starting a run,
+so it never truncates or merges distinct source locations.
+
 ## Simulation rules
 
 | Rule | Exact behavior |
