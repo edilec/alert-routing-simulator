@@ -113,3 +113,25 @@ test('an invalid or backwards injected elapsed clock cannot produce a pass', () 
     assert.deepEqual(report.notifications, [])
   }
 })
+
+test('a failed first clock tick is clock-invalid incomplete without leaking its exception', () => {
+  const quiet = { timeZone: 'UTC', start: '22:00', end: '07:00' }
+  const document = scenario('2026-09-20T10:00:00.000Z', '2026-09-20T11:00:00.000Z', quiet)
+  const good = run(document, undefined, { clock: () => 0 })
+  assert.equal(good.status, 'pass')
+  assert.equal(good.summary.checked, 1)
+  for (const clock of [
+    () => { throw new Error('SYNTHETIC_CLOCK_CANARY') },
+    () => NaN,
+    () => Infinity,
+    () => '0',
+  ]) {
+    const report = run(document, undefined, { clock })
+    assert.equal(report.status, 'incomplete')
+    assert.equal(report.summary.checked, 0)
+    assert.deepEqual(report.decisions, [])
+    assert.deepEqual(report.notifications, [])
+    assert.deepEqual(report.findings.map((entry) => [entry.ruleId, entry.severity]), [['clock-invalid', 'error']])
+    assert.equal(JSON.stringify(report).includes('SYNTHETIC_CLOCK_CANARY'), false)
+  }
+})

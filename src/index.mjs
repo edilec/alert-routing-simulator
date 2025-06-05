@@ -93,8 +93,10 @@ export function incompleteReport(source, ruleId) {
 
 export function simulate(input = {}) {
   const { at, limits, clock, source } = configuration(input)
-  const started = clock()
-  if (!Number.isFinite(started)) throw new TypeError('Clock must return finite milliseconds.')
+  const stopped = (ruleId) => report(source, 0, [finding(ruleId, '', 'The simulation could not complete within its declared time evidence.')])
+  let started
+  try { started = clock() } catch { return stopped('clock-invalid') }
+  if (typeof started !== 'number' || !Number.isFinite(started)) return stopped('clock-invalid')
   let previousTick = started
   const elapsedProblem = () => {
     let tick
@@ -103,7 +105,6 @@ export function simulate(input = {}) {
     previousTick = tick
     return tick - started > limits.maxMillis ? 'simulation-timeout' : null
   }
-  const stopped = (ruleId) => report(source, 0, [finding(ruleId, '', 'The simulation could not complete within its declared time evidence.')])
   let document
   try {
     document = parseUniqueJson(input.scenarioBytes, limits)
